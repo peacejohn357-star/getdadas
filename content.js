@@ -6,7 +6,9 @@
   'use strict';
 
   // ── Constants & config ────────────────────────────────────────────────────
-  const WS_URL          = 'wss://ws.deriv.com/websockets/v3?app_id=1089';
+  const WS_URL          = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
+  const WS_URL_FALLBACK = 'wss://ws.deriv.com/websockets/v3?app_id=1089';
+  const FALLBACK_AFTER  = 3;     // consecutive failures before trying fallback endpoint
   const TICK_BUF        = 200;
   const CANDLE_BUF      = 200;
   const SR_WINDOW       = 30;    // candles used for S/R scan
@@ -32,6 +34,8 @@
   let resolvedSymbol = null;  // resolved after active_symbols handshake
   let manualClose    = false; // set true when user clicks Close; suppresses reconnect
   let reconnectDelay = RECONNECT_BASE; // grows with each failed attempt
+  let failCount      = 0;     // consecutive connection failures for fallback logic
+  let usingFallback  = false; // true when currently trying the fallback endpoint
 
   // ── Overlay build ─────────────────────────────────────────────────────────
   function buildOverlay () {
@@ -192,15 +196,22 @@
   function connect () {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
-    setWsState('connecting');
-    console.log('[3Tick] connecting to', WS_URL);
+    if (location.protocol !== 'https:') {
+      console.warn('[3Tick] page is not HTTPS – WebSocket connection may be blocked by the browser');
+    }
 
-    ws = new WebSocket(WS_URL);
+    var url = usingFallback ? WS_URL_FALLBACK : WS_URL;
+    setWsState('connecting');
+    console.log('[3Tick] connecting to', url, usingFallback ? '(fallback)' : '');
+
+    ws = new WebSocket(url);
 
     ws.addEventListener('open', function () {
       console.log('[3Tick] WebSocket open – requesting active_symbols');
       setWsState('connected');
       reconnectDelay = RECONNECT_BASE; // reset backoff on successful connection
+      failCount     = 0;
+      usingFallback = false;
       // Discover the correct symbol before subscribing
       ws.send(JSON.stringify({ active_symbols: 'brief', product_type: 'basic' }));
     });
@@ -240,7 +251,7 @@
     });
 
     ws.addEventListener('close', function (e) {
-      var info = `code=${e.code}${e.reason ? ' reason=' + e.reason : ''}`;
+      var info = `code=${e.code} wasClean=${e.wasClean}${e.reason ? ' reason=' + e.reason : ''}`;
       console.warn('[3Tick] WebSocket closed –', info);
       setWsState('disconnected');
       resolvedSymbol = null;
@@ -259,6 +270,18 @@
 
   function scheduleReconnect () {
     if (reconnectTimer) return; // already waiting
+    failCount++;
+    // After FALLBACK_AFTER consecutive failures on the primary, try the fallback endpoint once
+    if (!usingFallback && failCount >= FALLBACK_AFTER) {
+      usingFallback = true;
+      failCount = 0; // restart counter to track fallback failures independently
+      console.warn('[3Tick] switching to fallback endpoint after', FALLBACK_AFTER, 'failures');
+    } else if (usingFallback && failCount >= FALLBACK_AFTER) {
+      // Fallback also failing – revert to primary and keep retrying with backoff
+      usingFallback = false;
+      failCount = 0;
+      console.warn('[3Tick] fallback endpoint also failed; reverting to primary');
+    }
     var delay = reconnectDelay;
     console.log('[3Tick] reconnecting in', delay, 'ms');
     reconnectTimer = setTimeout(function () {

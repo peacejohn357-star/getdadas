@@ -795,10 +795,46 @@
     return { spikePct, spikeAbs, spikeMode: mode, candidate, rejectReason: null, fired: true };
   }
 
-  // Convert a price to integer tick units to avoid floating-point comparison noise.
-  // Example: toTickUnits(7984.70) with tickSize=0.1 → 79847
-  function toTickUnits (price) {
-    return Math.round(price / cfg.tickSize);
+  // ── Centralised trade-result settlement ─────────────────────────────────
+  // Single authoritative function used by all settlement and export paths.
+  // Uses raw numeric prices directly — no intermediate conversion layers.
+  //
+  // Validation examples:
+  //   SELL 7978.40 -> 7978.20 => WIN   (exit < entry)
+  //   SELL 7977.90 -> 7977.90 => WIN   (exit == entry, equality counts as WIN)
+  //   SELL 7977.80 -> 7978.00 => LOSS  (exit > entry)
+  //   BUY  7978.50 -> 7978.70 => WIN   (exit > entry)
+  //   BUY  7978.50 -> 7978.50 => WIN   (exit == entry, equality counts as WIN)
+  //   BUY  7978.60 -> 7978.40 => LOSS  (exit < entry)
+  function computeTradeResult (side, entryPrice, exitPrice) {
+    const entry = Number(entryPrice);
+    const exit  = Number(exitPrice);
+
+    // Guard: if either price is not a valid finite number, treat as unsettled.
+    if (!isFinite(entry) || !isFinite(exit)) {
+      if (cfg.debugSignals) {
+        console.warn('[3Tick][computeTradeResult] invalid prices — entry=' + entryPrice + ' exit=' + exitPrice);
+      }
+      return { isWin: false, result: 'LOSS', comparator: '?' };
+    }
+
+    const isBuy  = side === 'BUY';
+    const isWin  = isBuy ? (exit >= entry) : (exit <= entry);
+    const result = isWin ? 'WIN' : 'LOSS';
+
+    if (cfg.debugSignals) {
+      const comparator = isBuy ? '>=' : '<=';
+      console.log(
+        '[3Tick][computeTradeResult] source=computeTradeResult' +
+        ' side='           + side       +
+        ' entryPrice='     + entry      +
+        ' exitPrice='      + exit       +
+        ' comparator='     + comparator +
+        ' computedResult=' + result
+      );
+    }
+
+    return { isWin, result };
   }
 
   function scorePendingSignals (currentPrice) {
@@ -810,30 +846,12 @@
       sig.ticksAfter.push(currentPrice);
 
       if (sig.ticksAfter.length >= 3) {
-        const entry      = sig.price;
-        const exit       = sig.ticksAfter[2];
-        const entryTicks = toTickUnits(entry);
-        const exitTicks  = toTickUnits(exit);
-        const equalityCountsAsWin = cfg.equalCountsAsWin !== false; // default true
-        let isWin;
-        let comparator;
-        if (sig.type === 'BUY') {
-          isWin      = equalityCountsAsWin ? exitTicks >= entryTicks : exitTicks > entryTicks;
-          comparator = equalityCountsAsWin ? '>=' : '>';
-        } else {
-          isWin      = equalityCountsAsWin ? exitTicks <= entryTicks : exitTicks < entryTicks;
-          comparator = equalityCountsAsWin ? '<=' : '<';
-        }
-        sig.result     = isWin ? 'WIN' : 'LOSS';
+        const entry  = sig.price;
+        const exit   = sig.ticksAfter[2];
+        const { isWin, result } = computeTradeResult(sig.type, entry, exit);
+
+        sig.result     = result;
         sig.priceAfter = exit;
-        if (cfg.debugSignals) {
-          console.log(
-            '[3Tick][settle] side=' + sig.type +
-            ' entryPrice=' + entry + ' exitPrice=' + exit +
-            ' entryTicks=' + entryTicks + ' exitTicks=' + exitTicks +
-            ' comparator=' + comparator + ' result=' + sig.result
-          );
-        }
         if (isWin) { wins++;   updateWinsLossesUI(); }
         else       { losses++; updateWinsLossesUI(); }
         changed = true;

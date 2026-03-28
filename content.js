@@ -58,6 +58,7 @@
     // ── Real-trade execution settings ──────────────────────────────────────
     realTradeEnabled: false,   // master toggle for real trade execution
     realTimeoutMs:    40000,   // ms – wait for close confirmation before RECOVERY
+    realCooldownMs:   5000,    // ms – minimum time between real trade executions
   };
 
   // ── State ─────────────────────────────────────────────────────────────────
@@ -96,6 +97,7 @@
   let realLockReason  = '';     // reason for blocking trade (e.g. "OPEN_POSITION")
   let lastRealResult  = null;   // { result, pnl } from last closed real trade
   let realExecTimer   = null;   // timeout handle for RECOVERY transition
+  let lastRealTradeAt = 0;      // Date.now() of last execution click
 
   let ws             = null;
   let wsState        = 'disconnected';
@@ -2128,8 +2130,9 @@
       realExecTimer = null;
     }
 
-    if (count === 0 && (realExecState === 'OPEN' || realExecState === 'CLOSE_PENDING')) {
+    if (count === 0 && (realExecState === 'OPEN' || realExecState === 'CLOSE_PENDING' || realExecState === 'RECOVERY')) {
       realExecState = 'IDLE';
+      realLockReason = '';
     }
 
     if (closedResult && realExecState !== 'IDLE') {
@@ -2170,6 +2173,13 @@
       return;
     }
 
+    const now = Date.now();
+    const elapsed = now - lastRealTradeAt;
+    if (elapsed < cfg.realCooldownMs) {
+      console.warn(`[3Tick][real] Execution blocked: cooldown (${elapsed}ms < ${cfg.realCooldownMs}ms)`);
+      return;
+    }
+
     const buyLabel = side === 'BUY' ? 'Rise' : 'Fall';
     const activeClass = side === 'BUY' ? CLASS_RISE_ACTIVE : CLASS_FALL_ACTIVE;
 
@@ -2191,6 +2201,7 @@
       if (!btn) throw new Error('purchase_btn_missing');
 
       simulateExternalClick(btn);
+      lastRealTradeAt = Date.now();
       console.log(`[3Tick][real] CLICKED ${side} (${buyLabel})`);
 
       // 4. Record pending real trade

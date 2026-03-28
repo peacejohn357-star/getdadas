@@ -1,6 +1,6 @@
-# 3Tick Scalper – Step Index 100 Assistant
+# 3Tick Data Collector – Step Index 100 Assistant
 
-A Chrome extension that overlays a real-time trading assistant on [dtrader.deriv.com](https://dtrader.deriv.com) for **Step Index 100** manual scalping using 3-tick contract logic.
+A Chrome extension that overlays a real-time market data collector on [dtrader.deriv.com](https://dtrader.deriv.com) for **Step Index 100**. This tool calculates and logs technical indicators at every tick to a CSV file for analysis and pattern detection.
 
 ---
 
@@ -8,15 +8,23 @@ A Chrome extension that overlays a real-time trading assistant on [dtrader.deriv
 
 | Feature | Details |
 |---|---|
-| **Live tick feed** | Streams Step Index 100 ticks via the public Deriv WebSocket (`wss://ws.deriv.com/websockets/v3?app_id=1089`). Buffers the latest 200 ticks. |
-| **1-minute candle feed** | Subscribes to 1-min candles and buffers the latest 200. Auto-reconnects on disconnect. |
-| **3-tick signal detection** | Detects spike → reversal patterns (configurable spike % threshold and reversal-tick count) and fires BUY / SELL alerts. |
-| **Win / Loss tracking** | Scores each signal after 3 ticks and updates session W / L counters in real time. |
-| **S/R zones** | Scans a rolling window of recent candles for local high / low extrema and displays the top Resistance and Support levels. |
-| **1-min trend indicator** | Reads the last 3 closed candles and shows ▲ Up / ▼ Down / ↔ Side. |
-| **Draggable overlay** | Floating panel on the chart page; position is saved to `localStorage`. Minimise or close with header buttons. |
-| **CSV export** | One-click export of all signals (type, entry, time, result, exit price) as a `.csv` file. |
-| **Settings panel** | Adjust spike-% threshold and reversal-tick count without reloading. |
+| **Live Tick Feed** | Streams Step Index 100 ticks via the public Deriv WebSocket (`wss://ws.deriv.com/websockets/v3?app_id=1089`). |
+| **Indicator Calculation** | Computes a suite of technical indicators at every single tick: Bollinger Bands, MACD, RSI, Stochastic SMI, and EMA(4). |
+| **Real-time Data Logging** | Buffers up to 50,000 tick-level records (epoch, price, and all indicator values) in-memory during a session. |
+| **CSV Export** | One-click export of all logged data as a `.csv` file for external analysis. |
+| **Draggable Overlay** | Simplified floating panel showing connection status, current price, and current log count. Position is saved to `localStorage`. |
+
+---
+
+## Technical Indicators (Per Tick)
+
+The following indicators are calculated at every tick using a combination of the current price and historical candle data (1-minute granularity):
+
+- **Bollinger Bands (14, 2, EMA):** Calculates the Top, Middle, and Bottom bands using a 14-period EMA basis.
+- **MACD (12, 26, 9):** Standard MACD line, Signal line, and Histogram calculated using 12/26/9 EMA settings.
+- **RSI (14):** Relative Strength Index with a 14-period Wilders smoothing.
+- **Stochastic SMI (10, 3, 3, 10):** Stochastic Momentum Index with standard periods (10) and smoothing (3, 3, 10).
+- **EMA (4):** A fast Exponential Moving Average (4-period) based on tick prices.
 
 ---
 
@@ -27,57 +35,32 @@ A Chrome extension that overlays a real-time trading assistant on [dtrader.deriv
 3. Enable **Developer mode** (toggle in the top-right corner).
 4. Click **Load unpacked** and select the repository folder (the one containing `manifest.json`).
 5. Navigate to [https://dtrader.deriv.com](https://dtrader.deriv.com).  
-   The **3Tick Scalper** panel appears in the top-right corner of the page.
+   The **3Tick Data Collector** panel appears on the page.
 
 > **Note:** The extension runs only on `https://dtrader.deriv.com/*` and does not require any Deriv login or private API key.
 
 ---
 
-## File structure
+## File Structure
 
 ```
 3tick/
 ├── manifest.json   Chrome extension manifest (Manifest V3)
-├── content.js      Content script – WebSocket, signal logic, overlay UI
-├── styles.css      Overlay CSS
+├── content.js      Content script – WebSocket communication, indicator calculations, data logging, and overlay UI
+├── styles.css      Simplified overlay CSS
 └── README.md       This file
 ```
 
 ---
 
-## How signals work
+## Usage
 
-1. **Spike detection** – when the price moves ≥ `spikeThreshold` % in a single tick, a spike is recorded.  
-2. **Reversal confirmation** – if the next `reversalTicks` ticks move in the *opposite* direction, a signal is fired.  
-   - Spike **up** then reversal ticks **down** → **SELL**  
-   - Spike **down** then reversal ticks **up** → **BUY**  
-3. **Scoring** – after 3 more ticks the entry price is compared with the 3rd-tick price using integer tick units (`Math.round(price / tickSize)`) to avoid floating-point noise:  
-   - BUY: exitTicks ≥ entryTicks → **WIN**, else **LOSS** (equality counts as WIN)  
-   - SELL: exitTicks ≤ entryTicks → **WIN**, else **LOSS** (equality counts as WIN)
-
----
-
-## Customising
-
-All thresholds can be tweaked in the **⚙ settings** panel inside the overlay, or by editing the `cfg` object at the top of `content.js`:
-
-```js
-let cfg = {
-  spikeThreshold: 0.30,  // minimum % price-move to call a spike
-  reversalTicks:  1,     // consecutive opposite-direction ticks to confirm reversal
-};
-```
-
-To change the Deriv `app_id`, edit the `WS_URL` constant near the top of `content.js`.
-
----
-
-## Cautions / rate-limit notes
-
-- Only **one WebSocket** is opened at a time; it is reused for both tick and candle subscriptions.
-- The extension never issues more than two `subscribe` calls per connection (ticks + candles).
-- Reconnection uses a fixed 4-second back-off to avoid hammering the server.
-- No private API methods are used; all data comes from the public feed.
+1. **Connection:** The extension automatically connects to the Deriv WebSocket upon page load and resolves the Step Index 100 symbol.
+2. **Start Logging:** Click the **▶ Start Data Collection** button to begin buffering tick data and indicator values.
+3. **Monitoring:** The "Log Count" in the overlay shows the total number of records captured in the current session.
+4. **Stop Logging:** Click the **⏹ Stop Data Collection** button to pause logging.
+5. **Export:** Click **⬇ Export CSV** to download the buffered data as a CSV file.
+6. **Clear:** Use **Clear Log** to purge the current in-memory buffer.
 
 ---
 

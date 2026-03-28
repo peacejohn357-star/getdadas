@@ -1,5 +1,5 @@
 /* ====================================================
- * 3Tick Scalper – Step Index 100 Micro-Timing Data Collector
+ * 3Tick Scalper – Step Index 100 Micro-Timing V2 Collector
  * Content script for dtrader.deriv.com
  * ==================================================== */
 (function () {
@@ -12,11 +12,11 @@
   const TICK_BUF        = 1000;
   const RECONNECT_BASE  = 4000;
   const RECONNECT_MAX   = 64000;
-  const TICK_LOG_MAX    = 50000;
+  const TICK_LOG_MAX    = 100000; // Each T0 generates 3 rows
 
   // ── State ─────────────────────────────────────────────────────────────────
-  let ticks       = [];  // { price, epoch, delta, direction, deltaTime, lastDigit, ema4, rsi, vol5 }
-  let pendingLogs = [];  // logs waiting for T1, T2, T3 (max 4 per log: T0-T3)
+  let ticks       = [];  // { price, epoch, receivedAt, deltaSteps }
+  let pendingV2   = [];  // { t0, futureTicks[] }
   let tickLog     = [];  // finalized micro-timing logs
   let tickLogging = false;
 
@@ -40,7 +40,7 @@
     el.id = 'tt-overlay';
     el.innerHTML = `
       <div id="tt-header">
-        <span class="tt-title">3Tick Timing Collector</span>
+        <span class="tt-title">3Tick Timing V2</span>
         <div class="tt-header-btns">
           <button id="tt-min-btn"   title="Minimise">_</button>
           <button id="tt-close-btn" title="Close">✕</button>
@@ -62,7 +62,7 @@
           <span class="tt-val" id="tt-price">–</span>
         </div>
         <div class="tt-row">
-          <span class="tt-label">Collected Logs</span>
+          <span class="tt-label">Finalized Rows</span>
           <span class="tt-val" id="tt-log-count">0</span>
         </div>
 
@@ -132,7 +132,7 @@
     document.getElementById('tt-log-clear').addEventListener('click', function() {
         if (confirm('Clear all logged data?')) {
             tickLog = [];
-            pendingLogs = [];
+            pendingV2 = [];
             updateLogCount();
         }
     });
@@ -214,49 +214,6 @@
     el.innerHTML = `<span class="tt-dot ${dotClass[state]}"></span>${label[state]}`;
   }
 
-  // ── Indicators (Pure Tick-Based) ──────────────────────────────────────────
-  function calcEMA (period, data) {
-    const k = 2 / (period + 1);
-    let ema = NaN;
-    for (let i = 0; i < data.length; i++) {
-        if (isNaN(ema)) {
-            if (i === period - 1) {
-                let sum = 0;
-                for (let j = 0; j < period; j++) sum += data[j];
-                ema = sum / period;
-            }
-        } else {
-            ema = data[i] * k + ema * (1 - k);
-        }
-    }
-    return ema;
-  }
-
-  function calcRSI (data, period = 14) {
-    if (data.length < period + 1) return NaN;
-    let gains = 0, losses = 0;
-    for (let i = 1; i <= period; i++) {
-        const diff = data[i] - data[i - 1];
-        if (diff > 0) gains += diff; else losses += Math.abs(diff);
-    }
-    let avgG = gains / period, avgL = losses / period;
-    for (let i = period + 1; i < data.length; i++) {
-        const diff = data[i] - data[i - 1];
-        const g = diff > 0 ? diff : 0, l = diff < 0 ? Math.abs(diff) : 0;
-        avgG = (avgG * (period - 1) + g) / period;
-        avgL = (avgL * (period - 1) + l) / period;
-    }
-    return avgL === 0 ? 100 : 100 - (100 / (1 + (avgG / avgL)));
-  }
-
-  function calcVol5 (data) {
-    if (data.length < 5) return NaN;
-    const last5 = data.slice(-5);
-    const mean = last5.reduce((a, b) => a + b, 0) / 5;
-    const variance = last5.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / 5;
-    return Math.sqrt(variance);
-  }
-
   // ── Tick handling ─────────────────────────────────────────────────────────
   function handleTick (tick) {
     if (!tick || tick.symbol !== resolvedSymbol) return;
@@ -266,92 +223,103 @@
 
     const prevTick = ticks.length ? ticks[ticks.length - 1] : null;
     const delta = prevTick ? price - prevTick.price : 0;
+    const deltaSteps = delta / 0.1;
     const direction = delta > 0 ? 'UP' : (delta < 0 ? 'DOWN' : 'FLAT');
-    const deltaTime = prevTick ? (now - prevTick.receivedAt) : 0;
-    const lastDigit = Math.floor(Math.round(price * 100) / 10) % 10; // Accurate for Step Index 100 (2 decimals)
+    const deltaTime = prevTick ? (now - prevTick.receivedAt) : 1000; // default 1s
+    const speed = deltaTime > 0 ? deltaSteps / deltaTime : 0;
+    const lastDigit = Math.floor(Math.round(price * 100) / 10) % 10;
+    const deltaChange = prevTick ? deltaSteps - prevTick.deltaSteps : 0;
 
     if (delta > 0) { upStreak++; downStreak = 0; }
     else if (delta < 0) { downStreak++; upStreak = 0; }
     else { upStreak = 0; downStreak = 0; }
 
-    const prices = ticks.map(t => t.price).concat(price);
-    const ema4 = calcEMA(4, prices);
-    const rsi = calcRSI(prices, 14);
-    const vol5 = calcVol5(prices);
-
-    const currentTick = {
-        price, epoch, delta, direction, deltaTime, lastDigit,
-        upStreak, downStreak, ema4, rsi, vol5,
+    const t0_state = {
+        epoch, price, direction, deltaSteps, deltaTime, speed,
+        upStreak, downStreak, lastDigit, deltaChange,
         receivedAt: now
     };
-    ticks.push(currentTick);
+
+    ticks.push(t0_state);
     if (ticks.length > TICK_BUF) ticks.shift();
 
     const priceEl = document.getElementById('tt-price');
     if (priceEl) priceEl.textContent = price.toFixed(2);
 
-    // ── Future Ticks & Auto-Labeling ──
-    pendingLogs.forEach(log => {
-        if (log.t1 === null) log.t1 = price;
-        else if (log.t2 === null) log.t2 = price;
-        else if (log.t3 === null) {
-            log.t3 = price;
-            // Finalize log
-            finalizeLog(log);
+    // ── Entry Offset Simulation (V2) ──
+    pendingV2.forEach(log => {
+        log.futureTicks.push(price);
+        if (log.futureTicks.length === 6) {
+            finalizeV2Log(log);
         }
     });
-    pendingLogs = pendingLogs.filter(log => log.t3 === null);
+    pendingV2 = pendingV2.filter(log => log.futureTicks.length < 6);
 
     if (tickLogging) {
-        pendingLogs.push({
-            t0: currentTick,
-            t1: null,
-            t2: null,
-            t3: null
+        pendingV2.push({
+            t0: t0_state,
+            futureTicks: []
         });
     }
   }
 
-  function finalizeLog(log) {
+  function finalizeV2Log(log) {
     const t0 = log.t0;
-    const entryPriceT1 = log.t1;
-    const t3Price = log.t3;
+    const ft = log.futureTicks; // ft[0]=T1, ft[1]=T2, ft[2]=T3, ft[3]=T4, ft[4]=T5, ft[5]=T6
 
+    // offset = 1: entry=T1, t1=T2, t2=T3, t3=T4. outcome = T4 vs T1
+    addFinalRow(t0, 1, ft[0], ft[1], ft[2], ft[3]);
+
+    // offset = 2: entry=T2, t1=T3, t2=T4, t3=T5. outcome = T5 vs T2
+    addFinalRow(t0, 2, ft[1], ft[2], ft[3], ft[4]);
+
+    // offset = 3: entry=T3, t1=T4, t2=T5, t3=T6. outcome = T6 vs T3
+    addFinalRow(t0, 3, ft[2], ft[3], ft[4], ft[5]);
+
+    updateLogCount();
+  }
+
+  function addFinalRow(t0, offset, entry, t1, t2, t3) {
     tickLog.push({
         t0_epoch:      t0.epoch,
         t0_price:      t0.price,
         t0_direction:  t0.direction,
-        t0_delta:      t0.delta.toFixed(2),
+        t0_delta_steps: t0.deltaSteps.toFixed(1),
         t0_delta_time: t0.deltaTime,
+        t0_speed:      t0.speed.toFixed(6),
         t0_up_streak:  t0.upStreak,
         t0_down_streak: t0.downStreak,
         t0_last_digit: t0.lastDigit,
-        t0_ema4_dist:  (t0.price - t0.ema4).toFixed(4),
-        t0_rsi:        isNaN(t0.rsi) ? '' : t0.rsi.toFixed(2),
-        volatility_5:  isNaN(t0.vol5) ? '' : t0.vol5.toFixed(4),
-        entry_price_t1: entryPriceT1,
-        t1_price:      log.t1,
-        t2_price:      log.t2,
-        t3_price:      log.t3,
-        buy_win:       t3Price >= entryPriceT1 ? 1 : 0,
-        sell_win:      t3Price <= entryPriceT1 ? 1 : 0
+        t0_delta_change: t0.deltaChange.toFixed(1),
+
+        entry_offset:  offset,
+        entry_price:   entry,
+        t1:            t1,
+        t2:            t2,
+        t3:            t3,
+
+        buy_win:       t3 >= entry ? 1 : 0,
+        sell_win:      t3 <= entry ? 1 : 0
     });
 
     if (tickLog.length > TICK_LOG_MAX) tickLog.shift();
-    updateLogCount();
   }
 
   // ── CSV export ────────────────────────────────────────────────────────────
   function exportTickLog () {
     if (!tickLog.length) return;
-    const headers = ['t0_epoch', 't0_price', 't0_direction', 't0_delta', 't0_delta_time', 't0_up_streak', 't0_down_streak', 't0_last_digit', 't0_ema4_dist', 't0_rsi', 'volatility_5', 'entry_price_t1', 't1_price', 't2_price', 't3_price', 'buy_win', 'sell_win'];
+    const headers = [
+        't0_epoch', 't0_price', 't0_direction', 't0_delta_steps', 't0_delta_time',
+        't0_speed', 't0_up_streak', 't0_down_streak', 't0_last_digit', 't0_delta_change',
+        'entry_offset', 'entry_price', 't1', 't2', 't3', 'buy_win', 'sell_win'
+    ];
     const rows = [headers].concat(tickLog.map(r => headers.map(h => r[h])));
     const csv  = rows.map(r => r.join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
-    a.download = '3tick-timing-' + Date.now() + '.csv';
+    a.download = '3tick-timing-v2-' + Date.now() + '.csv';
     a.click();
     URL.revokeObjectURL(url);
   }

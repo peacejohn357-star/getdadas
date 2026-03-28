@@ -1,5 +1,5 @@
 /* ====================================================
- * 3Tick Scalper – Step Index 100 Assistant
+ * 3Tick Scalper – Step Index 100 Data Collector
  * Floating overlay styles for dtrader.deriv.com
  * ==================================================== */
 
@@ -124,111 +124,13 @@
   50% { opacity: 0.3; }
 }
 
-/* ── Trend ── */
-.tt-trend-up   { color: #3ecf60; }
-.tt-trend-down { color: #e04040; }
-.tt-trend-side { color: #f0c040; }
-
-/* ── W / L ── */
-.tt-wins   { color: #3ecf60; }
-.tt-losses { color: #e04040; }
-
-/* ── Signals list ── */
-#tt-signals-list {
-  margin-top: 2px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  max-height: 130px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #3a4260 transparent;
-}
-
-.tt-signal {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 3px 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  background: #1e2338;
-}
-
-.tt-signal-buy  { border-left: 3px solid #3ecf60; }
-.tt-signal-sell { border-left: 3px solid #e04040; }
-
-.tt-signal-type {
-  font-weight: 700;
-  width: 32px;
-}
-.tt-signal-buy  .tt-signal-type { color: #3ecf60; }
-.tt-signal-sell .tt-signal-type { color: #e04040; }
-
-.tt-signal-price { color: #b0b8cc; flex: 1; text-align: center; }
-.tt-signal-time  { color: #6a7488; font-size: 10px; }
-
-.tt-badge {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 5px;
-  border-radius: 3px;
-  margin-left: 4px;
-}
-.tt-badge-win     { background: #1a3d28; color: #3ecf60; }
-.tt-badge-loss    { background: #3d1a1a; color: #e04040; }
-.tt-badge-pending { background: #2e2a10; color: #f0c040; }
-
-/* ── S/R zones ── */
-#tt-sr-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: 2px;
-}
-
-.tt-sr-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-}
-
-.tt-sr-label {
-  font-size: 10px;
-  font-weight: 700;
-  width: 12px;
-}
-.tt-sr-res { color: #e04040; }
-.tt-sr-sup { color: #3ecf60; }
-.tt-sr-price { color: #b0b8cc; }
-
-/* ── Export button ── */
-#tt-export {
-  width: 100%;
-  margin-top: 2px;
-  padding: 5px 0;
-  background: #232a42;
-  border: 1px solid #3a4260;
-  color: #7ec8e3;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  transition: background 0.15s;
-}
-
-#tt-export:hover {
-  background: #2e3a5a;
-}
-
-/* ── Tick log buttons ── */
+/* ── Log buttons ── */
 #tt-log-toggle,
-#tt-log-export {
+#tt-log-export,
+#tt-log-clear {
   width: 100%;
   margin-top: 2px;
-  padding: 5px 0;
+  padding: 8px 0;
   background: #232a42;
   border: 1px solid #3a4260;
   color: #a0c8a0;
@@ -241,115 +143,7 @@
 }
 
 #tt-log-toggle:hover,
-#tt-log-export:hover {
+#tt-log-export:hover,
+#tt-log-clear:hover {
   background: #2e3a5a;
 }
-
-/* ── Config section ── */
-#tt-config {
-  display: none;
-  padding: 6px 0 2px;
-  flex-direction: column;
-  gap: 4px;
-}
-#tt-config.tt-open { display: flex; }
-
-.tt-config-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 11px;
-  gap: 6px;
-}
-
-.tt-config-row input[type="number"] {
-  width: 60px;
-  background: #1e2338;
-  border: 1px solid #3a4260;
-  color: #e0e6f0;
-  border-radius: 3px;
-  padding: 2px 4px;
-  font-size: 11px;
-}
-
-/* ── Custom Toggle Switch ── */
-.tt-switch {
-  position: relative;
-  display: inline-block;
-  width: 32px;
-  height: 18px;
-  flex-shrink: 0;
-}
-
-.tt-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-  position: absolute;
-  z-index: -1;
-}
-
-.tt-slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background-color: #3a4260;
-  transition: .2s;
-  border-radius: 18px;
-  border: 1px solid #4e5a80; /* Added border for visibility */
-}
-
-.tt-slider:before {
-  position: absolute;
-  content: "";
-  height: 12px;
-  width: 12px;
-  left: 2px;
-  bottom: 2px;
-  background-color: #fff;
-  transition: .2s;
-  border-radius: 50%;
-  box-shadow: 0 0 2px rgba(0,0,0,0.5);
-}
-
-input:checked + .tt-slider {
-  background-color: #f0a060;
-}
-
-input:checked + .tt-slider:before {
-  transform: translateX(14px);
-}
-
-#tt-config-toggle {
-  background: transparent;
-  border: none;
-  color: #7a8499;
-  cursor: pointer;
-  font-size: 11px;
-  padding: 0;
-  text-decoration: underline dotted;
-}
-#tt-config-toggle:hover { color: #7ec8e3; }
-
-.tt-config-section-label {
-  font-size: 10px;
-  color: #7a8499;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  padding: 4px 0 2px;
-  border-top: 1px solid #2e3650;
-  margin-top: 2px;
-}
-
-/* ── Alert bar ── */
-#tt-alert {
-  display: none;
-  padding: 4px 8px;
-  background: #3d2010;
-  border-top: 1px solid #7a3a10;
-  color: #f0a060;
-  font-size: 11px;
-  border-radius: 0 0 8px 8px;
-  text-align: center;
-}
-#tt-alert.tt-visible { display: block; }

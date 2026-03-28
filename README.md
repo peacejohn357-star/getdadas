@@ -1,6 +1,6 @@
-# 3Tick Data Collector – Step Index 100 Assistant
+# 3Tick Timing Collector – Step Index 100 Assistant
 
-A Chrome extension that overlays a real-time market data collector on [dtrader.deriv.com](https://dtrader.deriv.com) for **Step Index 100**. This tool calculates and logs technical indicators at every tick to a CSV file for analysis and pattern detection.
+A Chrome extension that overlays a micro-timing data collector on [dtrader.deriv.com](https://dtrader.deriv.com) for **Step Index 100**. This tool captures price action and lightweight indicators at a decision tick ($T_0$) and automatically labels the outcome based on the next three ticks ($T_1, T_2, T_3$).
 
 ---
 
@@ -9,22 +9,32 @@ A Chrome extension that overlays a real-time market data collector on [dtrader.d
 | Feature | Details |
 |---|---|
 | **Live Tick Feed** | Streams Step Index 100 ticks via the public Deriv WebSocket (`wss://ws.deriv.com/websockets/v3?app_id=1089`). |
-| **Indicator Calculation** | Computes a suite of technical indicators at every single tick: Bollinger Bands, MACD, RSI, Stochastic SMI, and EMA(4). |
-| **Real-time Data Logging** | Buffers up to 50,000 tick-level records (epoch, price, and all indicator values) in-memory during a session. |
-| **CSV Export** | One-click export of all logged data as a `.csv` file for external analysis. |
-| **Draggable Overlay** | Simplified floating panel showing connection status, current price, and current log count. Position is saved to `localStorage`. |
+| **Micro-Timing Dataset** | Captures $T_0$ features: direction, delta, speed, streaks, last digit, EMA(4) distance, RSI(14), and 5nd-tick volatility. |
+| **Auto-Labeling** | Tracks the three ticks following every $T_0$ and calculates WIN/LOSS labels for both BUY and SELL entries. |
+| **Finalized Logging** | Buffers up to 50,000 finalized $T_0$–$T_3$ sequences in-memory during a session. |
+| **CSV Export** | One-click export of all collected timing data as a `.csv` file for ML training or pattern analysis. |
 
 ---
 
-## Technical Indicators (Per Tick)
+## Data Fields (CSV Columns)
 
-The following indicators are calculated at every tick using a combination of the current price and historical candle data (1-minute granularity):
+The collector exports a detailed dataset designed to answer: *"At this exact tick, should I enter or not?"*
 
-- **Bollinger Bands (14, 2, EMA):** Calculates the Top, Middle, and Bottom bands using a 14-period EMA basis.
-- **MACD (12, 26, 9):** Standard MACD line, Signal line, and Histogram calculated using 12/26/9 EMA settings.
-- **RSI (14):** Relative Strength Index with a 14-period Wilders smoothing.
-- **Stochastic SMI (10, 3, 3, 10):** Stochastic Momentum Index with standard periods (10) and smoothing (3, 3, 10).
-- **EMA (4):** A fast Exponential Moving Average (4-period) based on tick prices.
+### At Decision Tick ($T_0$)
+- **t0_epoch / t0_price:** The timestamp and price at the moment of decision.
+- **t0_direction / t0_delta:** The direction (UP/DOWN/FLAT) and price change from the previous tick.
+- **t0_delta_time:** Time in milliseconds since the previous tick (Speed).
+- **t0_up_streak / t0_down_streak:** Number of consecutive ticks moving in the same direction.
+- **t0_last_digit:** The first decimal digit of the price (Step Index behavior).
+- **t0_ema4_dist:** Distance between the current price and a fast 4-period EMA.
+- **t0_rsi:** Standard 14-period RSI calculated on a per-tick basis.
+- **volatility_5:** Standard deviation of the last 5 tick prices.
+
+### Outcomes ($T_1$ to $T_3$)
+- **entry_price_t1:** The price at the next tick (the likely entry price for a $T_0$ click).
+- **t1_price, t2_price, t3_price:** The prices at the three ticks following $T_0$.
+- **buy_win:** `1` if $T_3 \ge T_1$, else `0`.
+- **sell_win:** `1` if $T_3 \le T_1$, else `0`.
 
 ---
 
@@ -34,33 +44,19 @@ The following indicators are calculated at every tick using a combination of the
 2. Open Chrome and go to `chrome://extensions`.
 3. Enable **Developer mode** (toggle in the top-right corner).
 4. Click **Load unpacked** and select the repository folder (the one containing `manifest.json`).
-5. Navigate to [https://dtrader.deriv.com](https://dtrader.deriv.com).  
-   The **3Tick Data Collector** panel appears on the page.
-
-> **Note:** The extension runs only on `https://dtrader.deriv.com/*` and does not require any Deriv login or private API key.
-
----
-
-## File Structure
-
-```
-3tick/
-├── manifest.json   Chrome extension manifest (Manifest V3)
-├── content.js      Content script – WebSocket communication, indicator calculations, data logging, and overlay UI
-├── styles.css      Simplified overlay CSS
-└── README.md       This file
-```
+5. Navigate to [https://dtrader.deriv.com](https://dtrader.deriv.com).
+   The **3Tick Timing Collector** panel appears on the page.
 
 ---
 
 ## Usage
 
-1. **Connection:** The extension automatically connects to the Deriv WebSocket upon page load and resolves the Step Index 100 symbol.
-2. **Start Logging:** Click the **▶ Start Data Collection** button to begin buffering tick data and indicator values.
-3. **Monitoring:** The "Log Count" in the overlay shows the total number of records captured in the current session.
-4. **Stop Logging:** Click the **⏹ Stop Data Collection** button to pause logging.
-5. **Export:** Click **⬇ Export CSV** to download the buffered data as a CSV file.
-6. **Clear:** Use **Clear Log** to purge the current in-memory buffer.
+1. **Connection:** The extension automatically connects to the Deriv WebSocket and resolves the Step Index 100 symbol.
+2. **Start Collection:** Click **▶ Start Collection** to begin capturing and auto-labeling tick sequences.
+3. **Monitoring:** "Collected Logs" shows the count of finalized $T_0$–$T_3$ sequences ready for export.
+4. **Stop Collection:** Click **⏹ Stop Collection** to pause the collector.
+5. **Export:** Click **⬇ Export CSV** to download the dataset.
+6. **Clear:** Use **Clear Log** to purge the session buffer.
 
 ---
 

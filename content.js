@@ -815,6 +815,22 @@
     const spikeDir  = spikeTo > spikeFrom ? 1 : -1; // +1 = up spike, -1 = down spike
     const candidate = spikeDir === 1 ? 'SELL' : 'BUY';
 
+    // ── Strict Trend Gate (tick-MACD) ──
+    const tickMacd = deriveTickMacdTrend();
+    const trend    = tickMacd.trend;
+    if (trend === 'up' && candidate !== 'BUY') {
+      if (cfg.debugSignals) console.log(`[3Tick][signal] rejected: trend_mismatch (trend=up, candidate=${candidate})`);
+      return { spikePct, candidate, rejectReason: 'trend_mismatch', fired: false };
+    }
+    if (trend === 'down' && candidate !== 'SELL') {
+      if (cfg.debugSignals) console.log(`[3Tick][signal] rejected: trend_mismatch (trend=down, candidate=${candidate})`);
+      return { spikePct, candidate, rejectReason: 'trend_mismatch', fired: false };
+    }
+    if (trend !== 'up' && trend !== 'down') {
+      if (cfg.debugSignals) console.log(`[3Tick][signal] rejected: trend_not_clear (trend=${trend})`);
+      return { spikePct, candidate, rejectReason: 'trend_not_clear', fired: false };
+    }
+
     // Verify reversal ticks all move opposite to spike
     for (let i = 0; i < cfg.reversalTicks; i++) {
       const a = ticks[n - cfg.reversalTicks - 1 + i].price;
@@ -1563,30 +1579,19 @@
       return Object.assign(baseResult, { candidate: null, rejectReason: 'score_margin', fired: false });
     }
 
-    // 5. Hard trend gate (tick-MACD trend)
-    if (trend === 'down' && candidate === 'BUY') {
-      // Allow strong counter-trend BUY only if margin >= 2 and RSI/Stoch turning
-      const strongCounterTrend = (buyScore >= sellScore + 2) && rsi && rsi.rising && rsi.value < 45; // RSI below oversold threshold
-      if (!strongCounterTrend) {
-        if (cfg.debugSignals) console.log('[3Tick][indicator] rejected: trend_block_buy (tick_macd trend=down, buy=' + buyScore + ' sell=' + sellScore + ' macdLine=' + (isFinite(tickMacd.macdLine) ? tickMacd.macdLine.toFixed(6) : 'n/a') + ')');
-        return Object.assign(baseResult, { candidate: null, rejectReason: 'trend_block_buy', fired: false });
-      }
+    // 5. Strict Hard Trend Gate (tick-MACD trend)
+    // Requirement: BUY only on 'up', SELL only on 'down'. Block all on 'flat'.
+    if (trend === 'up' && candidate !== 'BUY') {
+      if (cfg.debugSignals) console.log('[3Tick][indicator] rejected: trend_mismatch (trend=up, candidate=' + candidate + ')');
+      return Object.assign(baseResult, { candidate: null, rejectReason: 'trend_mismatch', fired: false });
     }
-    if (trend === 'up' && candidate === 'SELL') {
-      const strongCounterTrend = (sellScore >= buyScore + 2) && rsi && !rsi.rising && rsi.value > 55; // RSI above overbought threshold
-      if (!strongCounterTrend) {
-        if (cfg.debugSignals) console.log('[3Tick][indicator] rejected: trend_block_sell (tick_macd trend=up, buy=' + buyScore + ' sell=' + sellScore + ' macdLine=' + (isFinite(tickMacd.macdLine) ? tickMacd.macdLine.toFixed(6) : 'n/a') + ')');
-        return Object.assign(baseResult, { candidate: null, rejectReason: 'trend_block_sell', fired: false });
-      }
+    if (trend === 'down' && candidate !== 'SELL') {
+      if (cfg.debugSignals) console.log('[3Tick][indicator] rejected: trend_mismatch (trend=down, candidate=' + candidate + ')');
+      return Object.assign(baseResult, { candidate: null, rejectReason: 'trend_mismatch', fired: false });
     }
-    if (trend === 'flat') {
-      // Stricter in choppy/flat market: require minScore+1 or margin>=2
-      const flatMinScore = minScore + 1;
-      const flatMargin   = 2;
-      if (score < flatMinScore || (score - loserScore) < flatMargin) {
-        if (cfg.debugSignals) console.log('[3Tick][indicator] rejected: score_margin (tick_macd flat trend, need score>=' + flatMinScore + ' margin>=' + flatMargin + ')');
-        return Object.assign(baseResult, { candidate: null, rejectReason: 'score_margin', fired: false });
-      }
+    if (trend !== 'up' && trend !== 'down') {
+      if (cfg.debugSignals) console.log('[3Tick][indicator] rejected: trend_not_clear (trend=' + trend + ')');
+      return Object.assign(baseResult, { candidate: null, rejectReason: 'trend_not_clear', fired: false });
     }
 
     // 6. Anti-chop filter: RSI neutral band AND MACD histogram near zero

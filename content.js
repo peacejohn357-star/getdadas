@@ -189,25 +189,29 @@
   }
 
   function processTerminalStreak(current, oldUp, oldDown) {
-    // Detect Start
+    // 1. Detect Break (Direction change or Flat) BEFORE handling new streak
+    const upBroken = (upStreak === 0 && oldUp > 0);
+    const downBroken = (downStreak === 0 && oldDown > 0);
+
+    if ((upBroken || downBroken) && currentStreakActive) {
+        if (streakMaxLen >= 4 && tickLogging) {
+            logEvent('STREAK', current, streakPreContext, streakStartContext, '', streakMaxLen);
+        }
+        currentStreakActive = false;
+        streakMaxLen = 0;
+    }
+
+    // 2. Detect Start of a NEW streak
     if ((upStreak === 1 && oldUp === 0) || (downStreak === 1 && oldDown === 0)) {
         streakPreContext = ticks.length ? ticks[ticks.length - 1] : current;
         streakStartContext = current;
         currentStreakActive = true;
         streakMaxLen = 1;
     }
-    // Detect Progress
+
+    // 3. Detect Progress of ACTIVE streak
     if (currentStreakActive) {
         streakMaxLen = Math.max(streakMaxLen, upStreak, downStreak);
-    }
-    // Detect Break (Direction change or Flat)
-    const broken = (upStreak === 0 && oldUp > 0) || (downStreak === 0 && oldDown > 0);
-    if (broken && currentStreakActive) {
-        if (streakMaxLen >= 4 && tickLogging) {
-            logEvent('STREAK', current, streakPreContext, streakStartContext, '', streakMaxLen);
-        }
-        currentStreakActive = false;
-        streakMaxLen = 0;
     }
   }
 

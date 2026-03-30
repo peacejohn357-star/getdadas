@@ -1,6 +1,7 @@
 /* ====================================================
- * 3Tick Scalper – Step Index 100 Micro-Timing V2 Collector
+ * 3Tick Scalper – Step Index 100 Micro-Timing V3 Collector
  * Content script for dtrader.deriv.com
+ * Refined for Streak & Pattern Analysis
  * ==================================================== */
 (function () {
   'use strict';
@@ -12,16 +13,22 @@
   const TICK_BUF        = 1000;
   const RECONNECT_BASE  = 4000;
   const RECONNECT_MAX   = 64000;
-  const TICK_LOG_MAX    = 100000; // Each T0 generates 3 rows
+  const LOG_MAX         = 50000;
 
   // ── State ─────────────────────────────────────────────────────────────────
-  let ticks       = [];  // { price, epoch, receivedAt, deltaSteps }
-  let pendingV2   = [];  // { t0, futureTicks[] }
-  let tickLog     = [];  // finalized micro-timing logs
+  let ticks       = [];  // { price, epoch, receivedAt, deltaSteps, ... }
+  let eventLog    = [];  // finalized micro-timing events (streaks/patterns)
   let tickLogging = false;
 
-  let upStreak = 0;
-  let downStreak = 0;
+  let upStreak    = 0;
+  let downStreak  = 0;
+  let dirHistory  = []; // Array of 'U', 'D', 'F' (Up, Down, Flat)
+
+  // Trackers for pre-streak/start-streak context
+  let lastUpPreContext   = null; // State when upStreak was 0
+  let lastUpStartContext = null; // State when upStreak was 1
+  let lastDownPreContext   = null; // State when downStreak was 0
+  let lastDownStartContext = null; // State when downStreak was 1
 
   let ws             = null;
   let wsState        = 'disconnected';
@@ -40,7 +47,7 @@
     el.id = 'tt-overlay';
     el.innerHTML = `
       <div id="tt-header">
-        <span class="tt-title">3Tick Timing V2</span>
+        <span class="tt-title">3Tick Timing V3</span>
         <div class="tt-header-btns">
           <button id="tt-min-btn"   title="Minimise">_</button>
           <button id="tt-close-btn" title="Close">✕</button>
@@ -62,7 +69,7 @@
           <span class="tt-val" id="tt-price">–</span>
         </div>
         <div class="tt-row">
-          <span class="tt-label">Finalized Rows</span>
+          <span class="tt-label">Events Logged</span>
           <span class="tt-val" id="tt-log-count">0</span>
         </div>
 
@@ -128,11 +135,10 @@
       this.textContent = tickLogging ? '⏹ Stop Collection' : '▶ Start Collection';
       this.style.color = tickLogging ? '#e04040' : '#a0c8a0';
     });
-    document.getElementById('tt-log-export').addEventListener('click', exportTickLog);
+    document.getElementById('tt-log-export').addEventListener('click', exportEventLog);
     document.getElementById('tt-log-clear').addEventListener('click', function() {
         if (confirm('Clear all logged data?')) {
-            tickLog = [];
-            pendingV2 = [];
+            eventLog = [];
             updateLogCount();
         }
     });
@@ -140,7 +146,7 @@
 
   function updateLogCount() {
     const el = document.getElementById('tt-log-count');
-    if (el) el.textContent = tickLog.length;
+    if (el) el.textContent = eventLog.length;
   }
 
   // ── WebSocket ─────────────────────────────────────────────────────────────
@@ -225,101 +231,132 @@
     const delta = prevTick ? price - prevTick.price : 0;
     const deltaSteps = delta / 0.1;
     const direction = delta > 0 ? 'UP' : (delta < 0 ? 'DOWN' : 'FLAT');
-    const deltaTime = prevTick ? (now - prevTick.receivedAt) : 1000; // default 1s
+    const deltaTime = prevTick ? (now - prevTick.receivedAt) : 1000;
     const speed = deltaTime > 0 ? deltaSteps / deltaTime : 0;
     const lastDigit = Math.floor(Math.round(price * 100) / 10) % 10;
+    const parity = lastDigit % 2;
     const deltaChange = prevTick ? deltaSteps - prevTick.deltaSteps : 0;
+
+    const t0_state = {
+        epoch, price, direction, deltaSteps, deltaTime, speed,
+        lastDigit, parity, deltaChange,
+        receivedAt: now
+    };
+
+    // Update streaks before push
+    const prevUp = upStreak;
+    const prevDown = downStreak;
 
     if (delta > 0) { upStreak++; downStreak = 0; }
     else if (delta < 0) { downStreak++; upStreak = 0; }
     else { upStreak = 0; downStreak = 0; }
 
-    const t0_state = {
-        epoch, price, direction, deltaSteps, deltaTime, speed,
-        upStreak, downStreak, lastDigit, deltaChange,
-        receivedAt: now
-    };
+    t0_state.upStreak = upStreak;
+    t0_state.downStreak = downStreak;
+
+    // Track Contexts
+    if (upStreak === 0) lastUpPreContext = t0_state;
+    if (upStreak === 1) lastUpStartContext = t0_state;
+    if (downStreak === 0) lastDownPreContext = t0_state;
+    if (downStreak === 1) lastDownStartContext = t0_state;
+
+    // Update History for Patterns
+    dirHistory.push(direction === 'UP' ? 'U' : (direction === 'DOWN' ? 'D' : 'F'));
+    if (dirHistory.length > 20) dirHistory.shift();
+
+    // ── Pattern Detection ──
+    const patternFound = detectPatterns();
+
+    // ── Log Events ──
+    if (tickLogging) {
+        // Streak Event
+        if (upStreak >= 4 || downStreak >= 4) {
+            logEvent('STREAK', t0_state, upStreak >= 4 ? lastUpPreContext : lastDownPreContext, upStreak >= 4 ? lastUpStartContext : lastDownStartContext);
+        }
+        // Pattern Event
+        if (patternFound) {
+            logEvent('PATTERN', t0_state, ticks[ticks.length - patternFound.length] || null, ticks[ticks.length - patternFound.length + 1] || null, patternFound.name);
+        }
+    }
 
     ticks.push(t0_state);
     if (ticks.length > TICK_BUF) ticks.shift();
 
     const priceEl = document.getElementById('tt-price');
     if (priceEl) priceEl.textContent = price.toFixed(2);
-
-    // ── Entry Offset Simulation (V2) ──
-    pendingV2.forEach(log => {
-        log.futureTicks.push(price);
-        if (log.futureTicks.length === 6) {
-            finalizeV2Log(log);
-        }
-    });
-    pendingV2 = pendingV2.filter(log => log.futureTicks.length < 6);
-
-    if (tickLogging) {
-        pendingV2.push({
-            t0: t0_state,
-            futureTicks: []
-        });
-    }
   }
 
-  function finalizeV2Log(log) {
-    const t0 = log.t0;
-    const ft = log.futureTicks; // ft[0]=T1, ft[1]=T2, ft[2]=T3, ft[3]=T4, ft[4]=T5, ft[5]=T6
+  function detectPatterns() {
+    if (dirHistory.length < 4) return null;
+    // Look for repeating sequences of length 2, 3 or 4
+    // Example: UUD UUD (len 3 repeating)
+    for (let len = 2; len <= 4; len++) {
+        if (dirHistory.length < len * 2) continue;
+        const p1 = dirHistory.slice(-len * 2, -len).join('');
+        const p2 = dirHistory.slice(-len).join('');
+        // Match only if it's a fresh completion of the second repeat
+        // and contains at least one movement (not just flat)
+        if (p1 === p2 && (p1.includes('U') || p1.includes('D'))) {
+            return { name: p1, length: len * 2 };
+        }
+    }
+    return null;
+  }
 
-    // offset = 1: entry=T1, t1=T2, t2=T3, t3=T4. outcome = T4 vs T1
-    addFinalRow(t0, 1, ft[0], ft[1], ft[2], ft[3]);
+  function logEvent(type, current, pre, start, patternName = '') {
+    // Only log if not a duplicate streak log (optional: log every tick of streak >=4 or just the first time? User said "Filter by streaks >= 4" so usually we log the moment it hits 4 and every tick thereafter is part of that streak)
+    // To be safe, we log every tick that satisfies the condition.
 
-    // offset = 2: entry=T2, t1=T3, t2=T4, t3=T5. outcome = T5 vs T2
-    addFinalRow(t0, 2, ft[1], ft[2], ft[3], ft[4]);
+    eventLog.push({
+        event_type: type,
+        pattern_name: patternName,
 
-    // offset = 3: entry=T3, t1=T4, t2=T5, t3=T6. outcome = T6 vs T3
-    addFinalRow(t0, 3, ft[2], ft[3], ft[4], ft[5]);
+        t0_epoch:      current.epoch,
+        t0_price:      current.price,
+        t0_direction:  current.direction,
+        t0_speed:      current.speed.toFixed(6),
+        t0_delta_steps: current.deltaSteps.toFixed(1),
+        t0_delta_time: current.deltaTime,
+        t0_last_digit: current.lastDigit,
+        t0_parity:     current.parity,
+        t0_up_streak:  current.upStreak,
+        t0_down_streak: current.downStreak,
+        t0_delta_change: current.deltaChange.toFixed(1),
 
+        pre_speed:     pre ? pre.speed.toFixed(6) : '',
+        pre_delta_steps: pre ? pre.deltaSteps.toFixed(1) : '',
+        pre_last_digit: pre ? pre.lastDigit : '',
+        pre_delta_time: pre ? pre.deltaTime : '',
+        pre_parity:    pre ? pre.parity : '',
+
+        start_speed:   start ? start.speed.toFixed(6) : '',
+        start_delta_steps: start ? start.deltaSteps.toFixed(1) : '',
+        start_last_digit: start ? start.lastDigit : '',
+        start_delta_time: start ? start.deltaTime : '',
+        start_parity:  start ? start.parity : ''
+    });
+
+    if (eventLog.length > LOG_MAX) eventLog.shift();
     updateLogCount();
   }
 
-  function addFinalRow(t0, offset, entry, t1, t2, t3) {
-    tickLog.push({
-        t0_epoch:      t0.epoch,
-        t0_price:      t0.price,
-        t0_direction:  t0.direction,
-        t0_delta_steps: t0.deltaSteps.toFixed(1),
-        t0_delta_time: t0.deltaTime,
-        t0_speed:      t0.speed.toFixed(6),
-        t0_up_streak:  t0.upStreak,
-        t0_down_streak: t0.downStreak,
-        t0_last_digit: t0.lastDigit,
-        t0_delta_change: t0.deltaChange.toFixed(1),
-
-        entry_offset:  offset,
-        entry_price:   entry,
-        t1:            t1,
-        t2:            t2,
-        t3:            t3,
-
-        buy_win:       t3 >= entry ? 1 : 0,
-        sell_win:      t3 <= entry ? 1 : 0
-    });
-
-    if (tickLog.length > TICK_LOG_MAX) tickLog.shift();
-  }
-
   // ── CSV export ────────────────────────────────────────────────────────────
-  function exportTickLog () {
-    if (!tickLog.length) return;
+  function exportEventLog () {
+    if (!eventLog.length) return;
     const headers = [
-        't0_epoch', 't0_price', 't0_direction', 't0_delta_steps', 't0_delta_time',
-        't0_speed', 't0_up_streak', 't0_down_streak', 't0_last_digit', 't0_delta_change',
-        'entry_offset', 'entry_price', 't1', 't2', 't3', 'buy_win', 'sell_win'
+        'event_type', 'pattern_name',
+        't0_epoch', 't0_price', 't0_direction', 't0_speed', 't0_delta_steps', 't0_delta_time',
+        't0_last_digit', 't0_parity', 't0_up_streak', 't0_down_streak', 't0_delta_change',
+        'pre_speed', 'pre_delta_steps', 'pre_last_digit', 'pre_delta_time', 'pre_parity',
+        'start_speed', 'start_delta_steps', 'start_last_digit', 'start_delta_time', 'start_parity'
     ];
-    const rows = [headers].concat(tickLog.map(r => headers.map(h => r[h])));
+    const rows = [headers].concat(eventLog.map(r => headers.map(h => r[h])));
     const csv  = rows.map(r => r.join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
-    a.download = '3tick-timing-v2-' + Date.now() + '.csv';
+    a.download = '3tick-micro-v3-' + Date.now() + '.csv';
     a.click();
     URL.revokeObjectURL(url);
   }

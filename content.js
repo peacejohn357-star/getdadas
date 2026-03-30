@@ -236,20 +236,29 @@
             // Start of a potential pattern
             patternState = 1;
             firstBlock = blockName;
-            // Pattern Pre Context is the tick before the first block started
-            // Start context is the first tick of the first block
-            // We can approximate this from the streak history
             const lookback = prev.upStreak || prev.downStreak;
             patternPre = ticks[ticks.length - lookback] || prev;
             patternStart = ticks[ticks.length - lookback + 1] || current;
         }
         else if (patternState === 1) {
-            // Completion of the 2nd block
-            if (tickLogging) {
-                logEvent('PATTERN', current, patternPre, patternStart, firstBlock + ' ' + blockName);
+            // Check if 2nd block has the SAME direction as the 1st
+            const firstDir = firstBlock[0]; // 'U' or 'D'
+            const secondDir = blockName[0];
+
+            if (firstDir === secondDir) {
+                // Completion of the 2nd block (Matching Direction)
+                if (tickLogging) {
+                    logEvent('PATTERN', current, patternPre, patternStart, firstBlock + ' ' + blockName);
+                }
+                patternState = 0; // Reset
+                firstBlock = '';
+            } else {
+                // Direction flipped: 2nd block becomes the new 1st block
+                firstBlock = blockName;
+                const lookback = prev.upStreak || prev.downStreak;
+                patternPre = ticks[ticks.length - lookback] || prev;
+                patternStart = ticks[ticks.length - lookback + 1] || current;
             }
-            patternState = 0; // Reset
-            firstBlock = '';
         }
     }
 
